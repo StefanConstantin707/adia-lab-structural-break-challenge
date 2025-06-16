@@ -1,0 +1,114 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.crunchdao/
+local_model/
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Data files (managed by crunch-cli)
+data/*.parquet
+data/*.pickle
+data/*.csv
+data/processed_data.pkl
+
+# Model files
+resources/*.pkl
+resources/*.joblib
+resources/*.h5
+resources/*.pt
+resources/*.pth
+resources/*.onnx
+
+# Experiment results
+experiments/results/*
+!experiments/results/.gitkeep
+experiments/mlruns/
+experiments/outputs/
+
+# Logs
+*.log
+logs/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+profile_*.stats
+
+# CrunchDAO specific
+.crunch/
+crunch.yaml
+
+# Submission archives
+submissions_archive/archive/*
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+.cache/
+
+# Large files
+*.zip
+*.tar.gz
+*.7z
+
+# Environment variables
+.env
+.env.local
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+.directory
+
+# Secrets and credentials
+*.pem
+*.key
+credentials.json
+token.txt
