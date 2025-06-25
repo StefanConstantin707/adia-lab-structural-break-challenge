@@ -166,12 +166,6 @@ def plot_model_performance(
     fpr, tpr, _ = roc_curve(y_true, y_pred)
     roc_auc = auc(fpr, tpr)
 
-    direct_auc = roc_auc_score(y_true, y_pred)
-    print(f"[plot] direct roc_auc_score: {direct_auc:.6f}")
-    fpr, tpr, _ = roc_curve(y_true, y_pred)
-    roc_auc = auc(fpr, tpr)
-    print(f"[plot] auc(fpr, tpr): {roc_auc:.6f}")
-
     ax1.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.3f})')
     ax1.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Random')
     ax1.set_xlim([0.0, 1.0])

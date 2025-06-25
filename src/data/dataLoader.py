@@ -7,6 +7,10 @@ import logging
 from dataclasses import dataclass
 import pickle
 
+import crunch
+
+from config import DATA_DIR
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -43,8 +47,10 @@ class StructuralBreakDataLoader:
     with structural break labels.
     """
 
-    def __init__(self, data_dir: Union[str, Path] = "data"):
-        self.data_dir = Path(data_dir)
+    def __init__(self, data_dir: Union[str, Path] = None):
+        if data_dir is None:
+            self.data_dir = DATA_DIR
+
         self.X_train = None
         self.y_train = None
         self.X_test = None
@@ -63,7 +69,6 @@ class StructuralBreakDataLoader:
         """
         if use_crunch:
             try:
-                import crunch
                 crunch_obj = crunch.load_notebook()
                 self.X_train, self.y_train, self.X_test = crunch_obj.load_data()
                 logger.info("Data loaded successfully using crunch")
@@ -202,32 +207,60 @@ class StructuralBreakDataLoader:
 
         return stats
 
-    def create_train_val_split(self, val_ratio: float = 0.2, random_state: int = 42) -> Tuple[Dict[int, TimeSeriesData], Dict[int, TimeSeriesData]]:
+    def create_train_val_split(
+            self,
+            val_ratio: float = 0.2,
+            data_ratio: float = 1.0,
+            random_state: int = 42
+    ) -> Tuple[Dict[int, TimeSeriesData], Dict[int, TimeSeriesData]]:
         """
-        Create train/validation split preserving class balance.
+        Create train/validation split preserving class balance, optionally on only a fraction of the data.
 
         Args:
-            val_ratio: Fraction of data to use for validation
-            random_state: Random seed for reproducibility
+            val_ratio: Fraction of the subset to use for validation (e.g. 0.2 means 20% of the subset).
+            data_ratio: Fraction of the full data to sample before splitting.
+                        If <1.0, only that fraction of examples (per class) are used for split;
+                        the rest are ignored.
+                        Must be in (0, 1].
+            random_state: Random seed for reproducibility.
 
         Returns:
-            Tuple of (train_dict, val_dict)
+            Tuple of (train_dict, val_dict) based on the sampled subset.
         """
+        if not (0 < data_ratio <= 1.0):
+            raise ValueError(f"data_ratio must be in (0,1], got {data_ratio}")
+
         np.random.seed(random_state)
 
+        # Separate IDs by class
         positive_ids = [sid for sid, ts in self._train_data_dict.items() if ts.has_break]
         negative_ids = [sid for sid, ts in self._train_data_dict.items() if not ts.has_break]
 
-        # Shuffle
+        # Shuffle IDs
         np.random.shuffle(positive_ids)
         np.random.shuffle(negative_ids)
 
-        # Split
+        # Determine how many from each class to include in the subset
+        if data_ratio < 1.0:
+            n_pos_subset = int(len(positive_ids) * data_ratio)
+            n_neg_subset = int(len(negative_ids) * data_ratio)
+            # Ensure at least 1 if possible and data exists
+            n_pos_subset = max(1, n_pos_subset) if positive_ids else 0
+            n_neg_subset = max(1, n_neg_subset) if negative_ids else 0
+            positive_ids = positive_ids[:n_pos_subset]
+            negative_ids = negative_ids[:n_neg_subset]
+        # else data_ratio == 1.0: use all shuffled IDs
+
+        # Now split each class-subset into train/val
         n_pos_val = int(len(positive_ids) * val_ratio)
         n_neg_val = int(len(negative_ids) * val_ratio)
 
         val_ids = positive_ids[:n_pos_val] + negative_ids[:n_neg_val]
         train_ids = positive_ids[n_pos_val:] + negative_ids[n_neg_val:]
+
+        # Optionally reshuffle combined lists so train/val aren’t ordered by class
+        np.random.shuffle(train_ids)
+        np.random.shuffle(val_ids)
 
         train_dict = {sid: self._train_data_dict[sid] for sid in train_ids}
         val_dict = {sid: self._train_data_dict[sid] for sid in val_ids}

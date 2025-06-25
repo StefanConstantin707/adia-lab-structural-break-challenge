@@ -85,19 +85,6 @@ def evaluate_model(model_path: str = "resources"):
     # Plot performance
     plot_model_performance(y_val.values, y_pred, save_path="experiments/results/roc_curve.png")
 
-    # Plot some examples
-    n_examples = min(5, len(val_ids))
-    for i in range(n_examples):
-        series_id = val_ids[i]
-        series_data = X_val.loc[series_id]
-        plot_time_series_with_break(
-            series_data,
-            series_id,
-            has_break=y_val.loc[series_id],
-            prediction=predictions_df.loc[series_id, 'prediction'],
-            save_path=f"experiments/results/example_{i}.png"
-        )
-
     return auc_score
 
 
