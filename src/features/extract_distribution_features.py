@@ -3,6 +3,7 @@ from typing import Dict, Union, Optional, List
 import pandas as pd
 import numpy as np
 import scipy.stats as st
+import warnings
 
 from src.data.dataLoader import TimeSeriesData
 from src.features.base_feature_extractor import BaseFeatureExtractor
@@ -12,14 +13,16 @@ class DistributionCombinedFeatureExtractor(BaseFeatureExtractor):
     """
     Extract distribution-based features, residual-distribution features, and raw distribution-distance features
     for a time series split into two periods.
+    Fixed version with proper sample size handling for statistical tests.
     """
 
     def __init__(
-        self,
-        lags: int = 1,
-        min_length: Optional[int] = None,
-        cache_name: str = 'distribution_combined_features',
-        force_recompute: bool = False
+            self,
+            lags: int = 1,
+            min_length: Optional[int] = None,
+            cache_name: str = 'distribution_combined_features',
+            force_recompute: bool = False,
+            min_sample_size: int = 8  # Minimum sample size for advanced statistical tests
     ):
         """
         Args:
@@ -28,10 +31,13 @@ class DistributionCombinedFeatureExtractor(BaseFeatureExtractor):
                         If None, defaults to lags + 2.
             cache_name: name for caching features.
             force_recompute: if True, ignore cache and always recompute.
+            min_sample_size: minimum sample size required for advanced statistical tests.
         """
-        super().__init__(cache_name=cache_name, force_recompute=force_recompute, lags=lags, min_length=min_length)
+        super().__init__(cache_name=cache_name, force_recompute=force_recompute, lags=lags,
+                         min_length=min_length, min_sample_size=min_sample_size)
         self.lags = lags
         self.min_length = min_length if min_length is not None else lags + 2
+        self.min_sample_size = min_sample_size
 
     def get_feature_names(self) -> List[str]:
         """
@@ -116,6 +122,60 @@ class DistributionCombinedFeatureExtractor(BaseFeatureExtractor):
         resid = y - X.dot(beta)
         return resid
 
+    def _safe_statistical_test(self, test_func, data1, data2, test_name="unknown", **kwargs):
+        """
+        Safely execute a statistical test with proper error handling and sample size checks.
+        """
+        try:
+            # Check minimum sample sizes
+            if len(data1) < self.min_sample_size or len(data2) < self.min_sample_size:
+                return np.nan, np.nan
+
+            # Check for constant arrays (zero variance)
+            if np.var(data1) == 0 or np.var(data2) == 0:
+                return np.nan, np.nan
+
+            # Suppress warnings for this specific test
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning)
+                warnings.filterwarnings("ignore", message=".*One or more sample arguments is too small.*")
+
+                result = test_func(data1, data2, **kwargs)
+
+                # Handle different return types
+                if hasattr(result, 'statistic') and hasattr(result, 'pvalue'):
+                    return float(result.statistic), float(result.pvalue)
+                elif isinstance(result, tuple) and len(result) >= 2:
+                    return float(result[0]), float(result[1])
+                else:
+                    return np.nan, np.nan
+
+        except Exception as e:
+            # For debugging, you can uncomment the next line
+            # print(f"Statistical test {test_name} failed: {e}")
+            return np.nan, np.nan
+
+    def _safe_distance_metric(self, metric_func, data1, data2, metric_name="unknown"):
+        """
+        Safely execute a distance metric with proper error handling.
+        """
+        try:
+            # Check minimum sample sizes
+            if len(data1) < 2 or len(data2) < 2:
+                return np.nan
+
+            # Suppress warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning)
+
+                result = metric_func(data1, data2)
+                return float(result)
+
+        except Exception as e:
+            # For debugging, you can uncomment the next line
+            # print(f"Distance metric {metric_name} failed: {e}")
+            return np.nan
+
     def _compute_distribution_features(self, p0: np.ndarray, p1: np.ndarray, features: Dict[str, float]):
         """
         Fill in distribution descriptive and comparative test features into `features` dict.
@@ -163,43 +223,29 @@ class DistributionCombinedFeatureExtractor(BaseFeatureExtractor):
         if len0 > 1 and len1 > 1:
 
             # T-test for mean difference
-            try:
-                t_stat, p_value = st.ttest_ind(p0, p1)
-                features['ttest_stat'] = float(t_stat)
-                features['ttest_pvalue'] = float(p_value)
-            except Exception:
-                features['ttest_stat'] = np.nan
-                features['ttest_pvalue'] = np.nan
+            t_stat, t_pvalue = self._safe_statistical_test(st.ttest_ind, p0, p1, "ttest")
+            features['ttest_stat'] = t_stat
+            features['ttest_pvalue'] = t_pvalue
 
             # Levene test for variance
-            try:
-                lev_stat, lev_pvalue = st.levene(p0, p1)
-                features['levene_stat'] = float(lev_stat)
-                features['levene_pvalue'] = float(lev_pvalue)
-            except Exception:
-                features['levene_stat'] = np.nan
-                features['levene_pvalue'] = np.nan
+            lev_stat, lev_pvalue = self._safe_statistical_test(st.levene, p0, p1, "levene")
+            features['levene_stat'] = lev_stat
+            features['levene_pvalue'] = lev_pvalue
 
-            # Mann-Whitney U test
-            try:
-                _, mw_p = st.mannwhitneyu(p0, p1)
-                features['mannwhitney_pvalue'] = float(mw_p)
-            except Exception:
-                features['mannwhitney_pvalue'] = np.nan
+            # Mann-Whitney U test (returns statistic, pvalue)
+            mw_stat, mw_pvalue = self._safe_statistical_test(st.mannwhitneyu, p0, p1, "mannwhitney")
+            features['mannwhitney_pvalue'] = mw_pvalue
 
             # KS test
-            try:
-                ks_res = st.ks_2samp(p0, p1)
-                features['ks_pvalue'] = float(ks_res.pvalue)
-            except Exception:
-                features['ks_pvalue'] = np.nan
+            ks_stat, ks_pvalue = self._safe_statistical_test(st.ks_2samp, p0, p1, "ks_2samp")
+            features['ks_pvalue'] = ks_pvalue
         else:
-            features['ttest_stat'] = 0.0
-            features['ttest_pvalue'] = 1.0
-            features['levene_stat'] = 0.0
-            features['levene_pvalue'] = 1.0
-            features['mannwhitney_pvalue'] = 1.0
-            features['ks_pvalue'] = 1.0
+            features['ttest_stat'] = np.nan
+            features['ttest_pvalue'] = np.nan
+            features['levene_stat'] = np.nan
+            features['levene_pvalue'] = np.nan
+            features['mannwhitney_pvalue'] = np.nan
+            features['ks_pvalue'] = np.nan
 
     def _compute_residual_distribution_features(self, p0: np.ndarray, p1: np.ndarray, features: Dict[str, float]):
         """
@@ -236,72 +282,60 @@ class DistributionCombinedFeatureExtractor(BaseFeatureExtractor):
         resid_post = self._ols_residuals(X_post, y_post)
 
         # KS test
-        try:
-            ks_res = st.ks_2samp(resid_pre, resid_post)
-            features['resid_ks_stat'] = float(ks_res.statistic)
-            features['resid_ks_pvalue'] = float(ks_res.pvalue)
-        except Exception:
-            features['resid_ks_stat'] = np.nan
-            features['resid_ks_pvalue'] = np.nan
+        ks_stat, ks_pvalue = self._safe_statistical_test(st.ks_2samp, resid_pre, resid_post, "resid_ks")
+        features['resid_ks_stat'] = ks_stat
+        features['resid_ks_pvalue'] = ks_pvalue
 
         # Mann-Whitney U
-        try:
-            mw_res = st.mannwhitneyu(resid_pre, resid_post, alternative='two-sided')
-            features['resid_mannwhitney_stat'] = float(mw_res.statistic)
-            features['resid_mannwhitney_pvalue'] = float(mw_res.pvalue)
-        except Exception:
-            features['resid_mannwhitney_stat'] = np.nan
-            features['resid_mannwhitney_pvalue'] = np.nan
+        mw_stat, mw_pvalue = self._safe_statistical_test(
+            st.mannwhitneyu, resid_pre, resid_post, "resid_mannwhitney", alternative='two-sided'
+        )
+        features['resid_mannwhitney_stat'] = mw_stat
+        features['resid_mannwhitney_pvalue'] = mw_pvalue
 
         # t-test (Welch)
-        try:
-            t_res = st.ttest_ind(resid_pre, resid_post, equal_var=False, nan_policy='omit')
-            features['resid_ttest_stat'] = float(t_res.statistic)
-            features['resid_ttest_pvalue'] = float(t_res.pvalue)
-        except Exception:
-            features['resid_ttest_stat'] = np.nan
-            features['resid_ttest_pvalue'] = np.nan
+        t_stat, t_pvalue = self._safe_statistical_test(
+            st.ttest_ind, resid_pre, resid_post, "resid_ttest", equal_var=False, nan_policy='omit'
+        )
+        features['resid_ttest_stat'] = t_stat
+        features['resid_ttest_pvalue'] = t_pvalue
 
         # Levene
-        try:
-            lev_res = st.levene(resid_pre, resid_post)
-            features['resid_levene_stat'] = float(lev_res.statistic)
-            features['resid_levene_pvalue'] = float(lev_res.pvalue)
-        except Exception:
-            features['resid_levene_stat'] = np.nan
-            features['resid_levene_pvalue'] = np.nan
+        lev_stat, lev_pvalue = self._safe_statistical_test(st.levene, resid_pre, resid_post, "resid_levene")
+        features['resid_levene_stat'] = lev_stat
+        features['resid_levene_pvalue'] = lev_pvalue
 
-        # Wasserstein
-        try:
-            w = st.wasserstein_distance(resid_pre, resid_post)
-            features['resid_wasserstein'] = float(w)
-        except Exception:
-            features['resid_wasserstein'] = np.nan
+        # Wasserstein distance
+        features['resid_wasserstein'] = self._safe_distance_metric(
+            st.wasserstein_distance, resid_pre, resid_post, "resid_wasserstein"
+        )
 
         # Energy distance
-        try:
-            e = st.energy_distance(resid_pre, resid_post)
-            features['resid_energy_distance'] = float(e)
-        except Exception:
-            features['resid_energy_distance'] = np.nan
+        features['resid_energy_distance'] = self._safe_distance_metric(
+            st.energy_distance, resid_pre, resid_post, "resid_energy"
+        )
 
-        # Cramér-von Mises
+        # Cramér-von Mises (check if available)
         try:
             from scipy.stats import cramervonmises_2samp
-            cvm_res = cramervonmises_2samp(resid_pre, resid_post)
-            features['resid_cramervonmises_stat'] = float(cvm_res.statistic)
-            features['resid_cramervonmises_pvalue'] = float(cvm_res.pvalue)
-        except Exception:
+            cvm_stat, cvm_pvalue = self._safe_statistical_test(
+                cramervonmises_2samp, resid_pre, resid_post, "resid_cramervonmises"
+            )
+            features['resid_cramervonmises_stat'] = cvm_stat
+            features['resid_cramervonmises_pvalue'] = cvm_pvalue
+        except ImportError:
             features['resid_cramervonmises_stat'] = np.nan
             features['resid_cramervonmises_pvalue'] = np.nan
 
-        # Epps-Singleton
+        # Epps-Singleton (with enhanced sample size checking)
         try:
             from scipy.stats import epps_singleton_2samp
-            es_res = epps_singleton_2samp(resid_pre, resid_post)
-            features['resid_epps_singleton_stat'] = float(es_res.statistic)
-            features['resid_epps_singleton_pvalue'] = float(es_res.pvalue)
-        except Exception:
+            es_stat, es_pvalue = self._safe_statistical_test(
+                epps_singleton_2samp, resid_pre, resid_post, "resid_epps_singleton"
+            )
+            features['resid_epps_singleton_stat'] = es_stat
+            features['resid_epps_singleton_pvalue'] = es_pvalue
+        except ImportError:
             features['resid_epps_singleton_stat'] = np.nan
             features['resid_epps_singleton_pvalue'] = np.nan
 
@@ -324,46 +358,42 @@ class DistributionCombinedFeatureExtractor(BaseFeatureExtractor):
                 features[name] = np.nan
             return
 
-        # Wasserstein
-        try:
-            w = st.wasserstein_distance(p0, p1)
-            features['raw_wasserstein'] = float(w)
-        except Exception:
-            features['raw_wasserstein'] = np.nan
+        # Wasserstein distance
+        features['raw_wasserstein'] = self._safe_distance_metric(
+            st.wasserstein_distance, p0, p1, "raw_wasserstein"
+        )
 
         # Energy distance
-        try:
-            e = st.energy_distance(p0, p1)
-            features['raw_energy_distance'] = float(e)
-        except Exception:
-            features['raw_energy_distance'] = np.nan
+        features['raw_energy_distance'] = self._safe_distance_metric(
+            st.energy_distance, p0, p1, "raw_energy"
+        )
 
         # KS test
-        try:
-            ks_res = st.ks_2samp(p0, p1)
-            features['raw_ks_stat'] = float(ks_res.statistic)
-            features['raw_ks_pvalue'] = float(ks_res.pvalue)
-        except Exception:
-            features['raw_ks_stat'] = np.nan
-            features['raw_ks_pvalue'] = np.nan
+        ks_stat, ks_pvalue = self._safe_statistical_test(st.ks_2samp, p0, p1, "raw_ks")
+        features['raw_ks_stat'] = ks_stat
+        features['raw_ks_pvalue'] = ks_pvalue
 
         # Cramér-von Mises
         try:
             from scipy.stats import cramervonmises_2samp
-            cvm_res = cramervonmises_2samp(p0, p1)
-            features['raw_cramervonmises_stat'] = float(cvm_res.statistic)
-            features['raw_cramervonmises_pvalue'] = float(cvm_res.pvalue)
-        except Exception:
+            cvm_stat, cvm_pvalue = self._safe_statistical_test(
+                cramervonmises_2samp, p0, p1, "raw_cramervonmises"
+            )
+            features['raw_cramervonmises_stat'] = cvm_stat
+            features['raw_cramervonmises_pvalue'] = cvm_pvalue
+        except ImportError:
             features['raw_cramervonmises_stat'] = np.nan
             features['raw_cramervonmises_pvalue'] = np.nan
 
-        # Epps-Singleton
+        # Epps-Singleton (with enhanced sample size checking)
         try:
             from scipy.stats import epps_singleton_2samp
-            es_res = epps_singleton_2samp(p0, p1)
-            features['raw_epps_singleton_stat'] = float(es_res.statistic)
-            features['raw_epps_singleton_pvalue'] = float(es_res.pvalue)
-        except Exception:
+            es_stat, es_pvalue = self._safe_statistical_test(
+                epps_singleton_2samp, p0, p1, "raw_epps_singleton"
+            )
+            features['raw_epps_singleton_stat'] = es_stat
+            features['raw_epps_singleton_pvalue'] = es_pvalue
+        except ImportError:
             features['raw_epps_singleton_stat'] = np.nan
             features['raw_epps_singleton_pvalue'] = np.nan
 

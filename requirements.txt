@@ -15,5 +15,12 @@ crunch-cli==6.4.4
 
 # Statistical tests
 statsmodels>=0.12.0
-ruptures>=1.1.5  # Change point detection
+ruptures>=1.1.5
 
+
+torch~=2.7.1+cu126
+pytest~=8.4.0
+joblib~=1.5.1
+optuna~=4.3.0
+tqdm~=4.67.1
+nbformat~=5.10.4

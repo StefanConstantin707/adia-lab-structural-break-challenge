@@ -8,6 +8,8 @@ from typing import List, Optional, Dict
 
 from sklearn.metrics import roc_auc_score
 
+from src.data.dataLoader import TimeSeriesData
+
 
 def plot_time_series_with_break(
         series_data: pd.DataFrame,
@@ -74,6 +76,73 @@ def plot_time_series_with_break(
     # Period indicator
     periods = series_data['period'].values
     ax2.fill_between(time_points, 0, periods, alpha=0.5, step='post')
+    ax2.set_ylabel('Period')
+    ax2.set_xlabel('Time')
+    ax2.set_ylim(-0.1, 1.1)
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    else:
+        plt.show()
+
+    plt.close()
+
+
+def plot_timeseries_dataclass(
+    ts: TimeSeriesData,
+    prediction: Optional[float] = None,
+    save_path: Optional[str] = None
+):
+    """
+    Plot a time series with highlighted periods and break point using TimeSeriesData.
+
+    Args:
+        ts: TimeSeriesData instance containing series and metadata
+        prediction: Model prediction score, if available
+        save_path: Path to save the plot image, or None to display
+    """
+    # Create masks based on boundary_point
+    period_0_mask = ts.time_points < ts.boundary_point
+    period_1_mask = ts.time_points >= ts.boundary_point
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), gridspec_kw={'height_ratios': [3, 1]})
+
+    # Main time series plot
+    ax1.plot(
+        ts.time_points[period_0_mask],
+        ts.values[period_0_mask],
+        'b-', label='Period 0', alpha=0.7
+    )
+    ax1.plot(
+        ts.time_points[period_1_mask],
+        ts.values[period_1_mask],
+        'r-', label='Period 1', alpha=0.7
+    )
+
+    # Boundary marker
+    ax1.axvline(x=ts.boundary_point, color='green', linestyle='--', label='Boundary', alpha=0.5)
+
+    # Title with labels
+    title = f"Series {ts.series_id}"
+    if ts.has_break is not None:
+        title += f" | True Label: {'Break' if ts.has_break else 'No Break'}"
+    if prediction is not None:
+        title += f" | Prediction: {prediction:.3f}"
+
+    ax1.set_title(title)
+    ax1.set_xlabel('Time')
+    ax1.set_ylabel('Value')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Period indicator subplot
+    periods = np.where(period_1_mask, 1, 0)
+    ax2.fill_between(
+        ts.time_points, 0, periods, alpha=0.5, step='post'
+    )
     ax2.set_ylabel('Period')
     ax2.set_xlabel('Time')
     ax2.set_ylim(-0.1, 1.1)

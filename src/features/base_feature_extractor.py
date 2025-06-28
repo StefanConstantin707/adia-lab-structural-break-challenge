@@ -24,6 +24,7 @@ class BaseFeatureExtractor(ABC):
                  cache_name: str = None,
                  force_recompute: bool = False,
                  cache_dir: str = None,
+                 check_same: bool = True,
                  **kwargs):
         """
         Initialize the base feature extractor.
@@ -48,9 +49,11 @@ class BaseFeatureExtractor(ABC):
         # Cache metadata file to store parameters
         self.cache_meta_file = self.cache_dir / f"{cache_name}_metadata.json"
 
-        self.cache_verified = False
+        self.cache_verified = not check_same
         self.cache_df = None
         self._verification_samples = 2
+
+        self.series_id = -1
 
         # Load cache if exists
         if not force_recompute:
@@ -253,6 +256,9 @@ class BaseFeatureExtractor(ABC):
         # Get cache key
         cache_key = self._get_cache_key(data)
 
+        if hasattr(data, 'series_id'):
+            self.series_id = data.series_id
+
         # Check cache first
         if not self.force_recompute and self.cache_df is not None and cache_key in self.cache_df.index:
             # On first access, verify cache with some samples
@@ -267,7 +273,7 @@ class BaseFeatureExtractor(ABC):
                 # For now, just verify this entry
                 computed_features = self._compute_features(data)
 
-                if self._verify_cache_entry(cache_key, computed_features):
+                if not self._verify_cache_entry(cache_key, computed_features):
                     self.cache_verified = True
                     return self.cache_df.loc[cache_key].to_dict()
                 else:

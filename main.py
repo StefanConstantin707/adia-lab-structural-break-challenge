@@ -12,18 +12,19 @@ import os
 from pathlib import Path
 import logging
 from typing import Dict, List, Any, Iterable
-import scipy.stats as st
 
-from src.features.extract_autocorrelation_features import extract_autocorrelation_features
-from src.features.extract_changepoint_features import extract_changepoint_features
-from src.features.extract_cusum_breakpoint_features import extract_cusum_breakpoint_features
-from src.features.extract_distribution_features import extract_distribution_features, extract_residual_distribution_features, \
-    extract_distribution_distance_features
-from src.features.extract_information_features import extract_information_features
-from src.features.extract_regression_breakpoint_features import extract_regression_breakpoint_features
-from src.features.extract_rolling_features import extract_rolling_features
-from src.features.extract_spectral_features import extract_spectral_features
-from src.features.extract_volatility_features import extract_volatility_features
+from src.features.extract_autocorrelation_features import AutocorrelationFeatureExtractor
+from src.features.extract_changepoint_features import ChangepointFeatureExtractor
+from src.features.extract_cnn_autoencoder_components import CNNBreakDetectionExtractor
+from src.features.extract_cusum_breakpoint_features import CusumBreakpointFeatureExtractor
+from src.features.extract_factor_break_features import FactorBreakFeatureExtractor
+
+from src.features.extract_information_features import InformationFeatureExtractor
+from src.features.extract_regression_breakpoint_features import RegressionBreakpointFeatureExtractor
+from src.features.extract_rolling_features import RollingFeatureExtractor
+from src.features.extract_spectral_features import SpectralFeatureExtractor
+from src.features.extract_volatility_features import VolatilityFeatureExtractor
+from src.features.extract_distribution_features import DistributionCombinedFeatureExtractor
 
 # Set random seed for reproducibility (REQUIRED for deterministic output)
 RANDOM_SEED = 42
@@ -65,40 +66,58 @@ def train(
     # Get unique series IDs
     unique_ids = X_train.index.get_level_values('id').unique()
 
+    volatilityExtractor = VolatilityFeatureExtractor()
+    spectralExtractor = SpectralFeatureExtractor()
+    rollingExtractor = RollingFeatureExtractor()
+    regressionBreakpointExtractor = RegressionBreakpointFeatureExtractor()
+    informationExtractor = InformationFeatureExtractor()
+    factorBreakExtractor = FactorBreakFeatureExtractor()
+    cusumBreakpointExtractor = CusumBreakpointFeatureExtractor()
+    changepointExtractor = ChangepointFeatureExtractor()
+    autocorrelationExtractor = AutocorrelationFeatureExtractor()
+    distributionCombinedExtractor = DistributionCombinedFeatureExtractor()
+
+    cnnBreakDetectionExtractor = CNNBreakDetectionExtractor()
+
     for series_id in unique_ids:
         try:
             series_data = X_train.loc[series_id]
-            dist_feats = extract_distribution_features(series_data)
-            ac_feats = extract_autocorrelation_features(series_data)
-            distribution_distance_features = extract_distribution_distance_features(series_data)
+            volatility_features = volatilityExtractor.extract_features(series_data)
 
-            lag = int(max(ac_feats["p0_num_sig_acf_lags"], ac_feats["p1_num_sig_acf_lags"]))
+            # 0.582
+            spectral_features = spectralExtractor.extract_features(series_data)
 
-            residual_distribution_features = extract_residual_distribution_features(series_data, lags=lag)
-            regression_breakpoint_features = extract_regression_breakpoint_features(series_data, lags=lag)
-            cumsum_breakpoint_features = extract_cusum_breakpoint_features(series_data, lags=lag)
+            # 0.6
+            rolling_features = rollingExtractor.extract_features(series_data)
 
-            # Tier 1 new features (highest impact)
-            spectral_features = extract_spectral_features(series_data)
-            information_features = extract_information_features(series_data)
-            volatility_features = extract_volatility_features(series_data)
+            # 0.618
+            regression_breakpoint_features = regressionBreakpointExtractor.extract_features(series_data)
 
-            # Tier 2 new features (good additions)
-            rolling_features = extract_rolling_features(series_data)
-            changepoint_features = extract_changepoint_features(series_data)
+            # 0.544
+            information_features = informationExtractor.extract_features(series_data)
 
-            # Combine all features
-            total_features = (dist_feats | ac_feats |
-                           regression_breakpoint_features |
-                           cumsum_breakpoint_features |
-                           distribution_distance_features |
-                           residual_distribution_features |
-                           spectral_features |
-                           information_features |
-                           volatility_features |
-                           rolling_features |
-                           changepoint_features
-                           )
+            # 0.522
+            factor_break_features = factorBreakExtractor.extract_features(series_data)
+
+            # 0.64
+            cusum_breakpoint_features = cusumBreakpointExtractor.extract_features(series_data)
+
+            # 0.573
+            changepoint_features = changepointExtractor.extract_features(series_data)
+
+            # 0.517
+            autocorrelation_features = autocorrelationExtractor.extract_features(series_data)
+
+            # 0.69
+            distribution_combined_features = distributionCombinedExtractor.extract_features(series_data)
+
+            cnn_break_detection_features = cnnBreakDetectionExtractor.extract_features(series_data)
+
+            total_features = (volatility_features | spectral_features | rolling_features | regression_breakpoint_features |
+                           information_features | factor_break_features | cusum_breakpoint_features |
+                           changepoint_features | autocorrelation_features | distribution_combined_features |
+                           cnn_break_detection_features)
+
             # Convert to list for DataFrame
             feature_list.append(total_features)
             labels.append(y_train.loc[series_id])
@@ -185,40 +204,57 @@ def infer(
     # Mark as ready
     yield
 
+    volatilityExtractor = VolatilityFeatureExtractor()
+    spectralExtractor = SpectralFeatureExtractor()
+    rollingExtractor = RollingFeatureExtractor()
+    regressionBreakpointExtractor = RegressionBreakpointFeatureExtractor()
+    informationExtractor = InformationFeatureExtractor()
+    factorBreakExtractor = FactorBreakFeatureExtractor()
+    cusumBreakpointExtractor = CusumBreakpointFeatureExtractor()
+    changepointExtractor = ChangepointFeatureExtractor()
+    autocorrelationExtractor = AutocorrelationFeatureExtractor()
+    distributionCombinedExtractor = DistributionCombinedFeatureExtractor()
+
+    cnnBreakDetectionExtractor = CNNBreakDetectionExtractor()
+
     # Process each dataset
     for dataset in X_test:
         try:
-            dist_feats = extract_distribution_features(dataset)
-            ac_feats = extract_autocorrelation_features(dataset)
-            distribution_distance_features = extract_distribution_distance_features(dataset)
+            volatility_features = volatilityExtractor.extract_features(dataset)
 
-            lag = int(max(ac_feats["p0_num_sig_acf_lags"], ac_feats["p1_num_sig_acf_lags"]))
+            # 0.582
+            spectral_features = spectralExtractor.extract_features(dataset)
 
-            residual_distribution_features = extract_residual_distribution_features(dataset, lags=lag)
-            regression_breakpoint_features = extract_regression_breakpoint_features(dataset, lags=lag)
-            cumsum_breakpoint_features = extract_cusum_breakpoint_features(dataset, lags=lag)
+            # 0.6
+            rolling_features = rollingExtractor.extract_features(dataset)
 
-            # Tier 1 new features (highest impact)
-            spectral_features = extract_spectral_features(dataset)
-            information_features = extract_information_features(dataset)
-            volatility_features = extract_volatility_features(dataset)
+            # 0.618
+            regression_breakpoint_features = regressionBreakpointExtractor.extract_features(dataset)
 
-            # Tier 2 new features (good additions)
-            rolling_features = extract_rolling_features(dataset)
-            changepoint_features = extract_changepoint_features(dataset)
+            # 0.544
+            information_features = informationExtractor.extract_features(dataset)
 
-            # Combine all features
-            total_features = (dist_feats | ac_feats |
-                              regression_breakpoint_features |
-                              cumsum_breakpoint_features |
-                              distribution_distance_features |
-                              residual_distribution_features |
-                              spectral_features |
-                              information_features |
-                              volatility_features |
-                              rolling_features |
-                              changepoint_features
-                              )
+            # 0.522
+            factor_break_features = factorBreakExtractor.extract_features(dataset)
+
+            # 0.64
+            cusum_breakpoint_features = cusumBreakpointExtractor.extract_features(dataset)
+
+            # 0.573
+            changepoint_features = changepointExtractor.extract_features(dataset)
+
+            # 0.517
+            autocorrelation_features = autocorrelationExtractor.extract_features(dataset)
+
+            # 0.69
+            distribution_combined_features = distributionCombinedExtractor.extract_features(dataset)
+
+            cnn_break_detection_features = cnnBreakDetectionExtractor.extract_features(dataset)
+
+            total_features = (volatility_features | spectral_features | rolling_features | regression_breakpoint_features |
+                              information_features | factor_break_features | cusum_breakpoint_features |
+                              changepoint_features | autocorrelation_features | distribution_combined_features |
+                              cnn_break_detection_features)
 
             # Create feature vector in correct order
             feature_vector = [total_features.get(fname, 0) for fname in feature_names]

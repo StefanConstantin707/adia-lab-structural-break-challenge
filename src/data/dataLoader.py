@@ -50,6 +50,8 @@ class StructuralBreakDataLoader:
     def __init__(self, data_dir: Union[str, Path] = None):
         if data_dir is None:
             self.data_dir = DATA_DIR
+        else:
+            self.data_dir = Path(data_dir)
 
         self.X_train = None
         self.y_train = None

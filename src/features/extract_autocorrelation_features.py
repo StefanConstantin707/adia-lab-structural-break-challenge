@@ -14,7 +14,7 @@ class AutocorrelationFeatureExtractor(BaseFeatureExtractor):
     """
 
     def __init__(self,
-                 max_lag: int = 20,
+                 max_lag: int = 100,
                  cache_name: str = 'autocorrelation_features',
                  force_recompute: bool = False):
         """
@@ -107,9 +107,11 @@ class AutocorrelationFeatureExtractor(BaseFeatureExtractor):
             seg_feats[f"{prefix}_acf_full"] = np.zeros(1)
             seg_feats[f"{prefix}_pacf_full"] = np.zeros(1)
             return seg_feats
+
         # Compute ACF and PACF
         acf_vals, pacf_vals = self._compute_acf_pacf(vals)
         nlags = len(acf_vals) - 1
+
         # Lag-specific features
         for lag in [1, 2, 5, 10]:
             if lag <= nlags:
@@ -118,21 +120,25 @@ class AutocorrelationFeatureExtractor(BaseFeatureExtractor):
             else:
                 seg_feats[f"{prefix}_acf_lag{lag}"] = 0.0
                 seg_feats[f"{prefix}_pacf_lag{lag}"] = 0.0
+
         # Summary over ACF lags 1..nlags
         acf_slice = acf_vals[1: nlags+1]
         seg_feats[f"{prefix}_acf_sum_abs"] = float(np.sum(np.abs(acf_slice)))
         seg_feats[f"{prefix}_acf_mean"] = float(np.mean(acf_slice))
         seg_feats[f"{prefix}_acf_std"] = float(np.std(acf_slice))
+
         # First zero-crossing
         zero_crossings = np.where(np.diff(np.sign(acf_slice)) != 0)[0]
         if len(zero_crossings) > 0:
             seg_feats[f"{prefix}_acf_first_zero"] = float(zero_crossings[0] + 1)
         else:
             seg_feats[f"{prefix}_acf_first_zero"] = float(nlags)
+
         # Significant lags count
         conf_bound = 1.96 / np.sqrt(n)
         num_sig = np.sum(np.abs(acf_slice) > conf_bound)
         seg_feats[f"{prefix}_num_sig_acf_lags"] = float(num_sig)
+
         # Ljung-Box test
         lb_lag = 10
         if n > lb_lag:
@@ -146,9 +152,11 @@ class AutocorrelationFeatureExtractor(BaseFeatureExtractor):
         else:
             seg_feats[f"{prefix}_lb_stat_lag10"] = np.nan
             seg_feats[f"{prefix}_lb_pvalue_lag10"] = np.nan
+
         # Store full arrays for distance computations
         seg_feats[f"{prefix}_acf_full"] = acf_vals
         seg_feats[f"{prefix}_pacf_full"] = pacf_vals
+
         return seg_feats
 
     def _compute_diff_feats(self, feats0: Dict[str, Union[float, np.ndarray]],
@@ -158,6 +166,7 @@ class AutocorrelationFeatureExtractor(BaseFeatureExtractor):
         # ACF distances
         acf0 = feats0.get("p0_acf_full")
         acf1 = feats1.get("p1_acf_full")
+
         if acf0 is not None and acf1 is not None:
             len0, len1 = len(acf0), len(acf1)
             L = max(len0, len1)
@@ -170,9 +179,11 @@ class AutocorrelationFeatureExtractor(BaseFeatureExtractor):
             features['diff_acf_euclid'] = 0.0
             features['diff_acf_l1'] = 0.0
             features['diff_acf_sum_abs'] = 0.0
+
         # PACF distances
         pacf0 = feats0.get("p0_pacf_full")
         pacf1 = feats1.get("p1_pacf_full")
+
         if pacf0 is not None and pacf1 is not None:
             len0, len1 = len(pacf0), len(pacf1)
             L = max(len0, len1)
@@ -185,19 +196,23 @@ class AutocorrelationFeatureExtractor(BaseFeatureExtractor):
             features['diff_pacf_euclid'] = 0.0
             features['diff_pacf_l1'] = 0.0
             features['diff_pacf_sum_abs'] = 0.0
+
         # First zero-crossing difference
         fz0 = feats0.get('p0_acf_first_zero', self.max_lag)
         fz1 = feats1.get('p1_acf_first_zero', self.max_lag)
         features['diff_acf_first_zero'] = float(fz1 - fz0)
+
         # Significant lags count difference
         ns0 = feats0.get('p0_num_sig_acf_lags', 0.0)
         ns1 = feats1.get('p1_num_sig_acf_lags', 0.0)
         features['diff_num_sig_acf_lags'] = float(ns1 - ns0)
+
         # Ljung-Box difference
         lb0_stat = feats0.get('p0_lb_stat_lag10', np.nan)
         lb1_stat = feats1.get('p1_lb_stat_lag10', np.nan)
         lb0_p = feats0.get('p0_lb_pvalue_lag10', np.nan)
         lb1_p = feats1.get('p1_lb_pvalue_lag10', np.nan)
+
         try:
             features['diff_lb_stat_lag10'] = float(lb1_stat - lb0_stat)
         except Exception:
@@ -211,20 +226,50 @@ class AutocorrelationFeatureExtractor(BaseFeatureExtractor):
     def _compute_features(self, data: Union[pd.DataFrame, TimeSeriesData]) -> Dict[str, float]:
         """Compute all autocorrelation features for a single time series."""
         features: Dict[str, float] = {}
-        vals0, vals1 = self._extract_period_values(data)
+        period_0, period_1 = self._extract_period_values(data)
+
+        if len(period_0) < 3 or len(period_1) < 3:
+            return self._get_default_features()
+
         # Compute per-segment features
-        feats0 = self._compute_segment_feats(vals0, prefix="p0")
-        feats1 = self._compute_segment_feats(vals1, prefix="p1")
+        feats0 = self._compute_segment_feats(period_0, prefix="p0")
+        feats1 = self._compute_segment_feats(period_1, prefix="p1")
+
         # Transfer scalar features
         for k, v in feats0.items():
             if isinstance(v, np.ndarray):
                 continue
             features[k] = v
+
         for k, v in feats1.items():
             if isinstance(v, np.ndarray):
                 continue
             features[k] = v
+
         # Compute and merge diff features
         diff_feats = self._compute_diff_feats(feats0, feats1)
         features.update(diff_feats)
+
         return features
+
+    def _get_default_features(self, throw_error: bool = True) -> Dict[str, float]:
+        """Return default features when extraction fails."""
+        default_features = {}
+
+        if throw_error:
+            raise Exception(f"{self.__class__.__name__.lower()} feature extraction failed at id: {self.series_id}")
+
+        # Add default values for all expected features
+        feature_names = self.get_feature_names()
+
+        for name in feature_names:
+            if 'pvalue' in name:
+                default_features[name] = 1.0
+            elif 'ratio' in name:
+                default_features[name] = 1.0
+            elif 'length' in name:
+                default_features[name] = 0
+            else:
+                default_features[name] = 0.0
+
+        return default_features

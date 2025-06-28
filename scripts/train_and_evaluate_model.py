@@ -1,10 +1,12 @@
 # scripts/optimize_xgboost.py
 """Script to evaluate model performance"""
 from sklearn.model_selection import StratifiedKFold, cross_validate
+from tqdm import tqdm
 from xgboost import XGBClassifier
 
 from src.features.extract_autocorrelation_features import AutocorrelationFeatureExtractor
 from src.features.extract_changepoint_features import ChangepointFeatureExtractor
+from src.features.extract_cnn_autoencoder_components import CNNBreakDetectionExtractor
 from src.features.extract_cusum_breakpoint_features import CusumBreakpointFeatureExtractor
 from src.features.extract_factor_break_features import FactorBreakFeatureExtractor
 
@@ -51,7 +53,9 @@ def load_and_extract_features():
     autocorrelationExtractor = AutocorrelationFeatureExtractor()
     distributionCombinedExtractor = DistributionCombinedFeatureExtractor()
 
-    for series_id, ts_obj in train_data_dict.items():
+    # cnnBreakDetectionExtractor = CNNBreakDetectionExtractor(check_same=False)
+
+    for series_id, ts_obj in tqdm(train_data_dict.items()):
         try:
             # 0.626
             volatility_features = volatilityExtractor.extract_features(ts_obj)
@@ -83,12 +87,11 @@ def load_and_extract_features():
             # 0.69
             distribution_combined_features = distributionCombinedExtractor.extract_features(ts_obj)
 
+            # cnn_break_detection_features = cnnBreakDetectionExtractor.extract_features(ts_obj)
+
             total_feats = (volatility_features | spectral_features | rolling_features | regression_breakpoint_features |
                            information_features | factor_break_features | cusum_breakpoint_features |
                            changepoint_features | autocorrelation_features | distribution_combined_features)
-
-            if series_id % 100 == 0:
-                print(f"Series {series_id}s")
 
         except Exception as e:
             logger.warning(f"Failed feature extraction for series {series_id}: {e}")
@@ -147,6 +150,30 @@ def train_test(X_train: pd.DataFrame, y_train: pd.Series):
     return val_mean, val_std, train_mean, train_std
 
 
+def get_feature_importance(X: pd.DataFrame, y: pd.Series, top_n: int = 20):
+    """
+    Train a final model on all data and extract feature importances.
+    """
+    model = XGBClassifier(
+        n_estimators=100,
+        max_depth=5,
+        learning_rate=0.1,
+        random_state=42,
+        eval_metric='logloss',
+    )
+
+    # Train on full dataset
+    model.fit(X, y)
+
+    # Get feature importances
+    feature_importance = pd.DataFrame({
+        'feature': X.columns,
+        'importance': model.feature_importances_
+    }).sort_values('importance', ascending=False)
+
+    return feature_importance.head(top_n)
+
+
 def t_features(random_state: int = 42):
     """
     Full pipeline: load data, extract features, split train/test, run Optuna search on train set,
@@ -167,6 +194,17 @@ def t_features(random_state: int = 42):
     print(f"CV Train ROC AUC:  {cv_train_mean:.4f} ± {cv_train_std:.4f}")
     print(f"CV Val ROC AUC:    {cv_val_mean:.4f} ± {cv_val_std:.4f}")
     print(f"Overfitting gap:   {cv_train_mean - cv_val_mean:.4f}")
+
+    # Get and print top 20 features
+    print(f"\n=== Top 20 Most Important Features ===")
+    top_features = get_feature_importance(X, y, top_n=20)
+
+    for i, (_, row) in enumerate(top_features.iterrows(), 1):
+        print(f"{i:2d}. {row['feature']:<50} {row['importance']:.6f}")
+
+    print(f"\n=== Feature Importance Summary ===")
+    print(f"Total features: {len(X.columns)}")
+    print(f"Top 20 features account for {top_features['importance'].sum():.2%} of total importance")
 
 
 if __name__ == "__main__":
