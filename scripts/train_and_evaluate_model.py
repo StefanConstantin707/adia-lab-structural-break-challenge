@@ -123,7 +123,7 @@ def train_test(X_train: pd.DataFrame, y_train: pd.Series):
         max_depth=5,
         learning_rate=0.1,
         random_state=42,
-        eval_metric='logloss',
+        eval_metric='roc_auc',
     )
 
     cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
