@@ -25,6 +25,7 @@ class BaseFeatureExtractor(ABC):
                  force_recompute: bool = False,
                  cache_dir: str = None,
                  check_same: bool = True,
+                 no_cache: bool = False,
                  **kwargs):
         """
         Initialize the base feature extractor.
@@ -33,42 +34,58 @@ class BaseFeatureExtractor(ABC):
             cache_name: Name for the cache file. If None, uses class name
             force_recompute: If True, ignore cache and recompute all features
             cache_dir: Custom cache directory. If None, uses CACHE_DIR from config
+            check_same: Whether to verify cache integrity
+            no_cache: If True, skip all cache operations entirely
             **kwargs: Additional parameters stored in self.params
         """
         self.force_recompute = force_recompute
+        self.no_cache = no_cache
         self.params = kwargs
+        self.check_same = check_same
 
-        # Setup cache
-        if cache_name is None:
-            cache_name = self.__class__.__name__.lower()
+        if not no_cache:
+            # Setup cache only if not skipping cache
+            if cache_name is None:
+                cache_name = self.__class__.__name__.lower()
 
-        self.cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
-        self.cache_dir.mkdir(exist_ok=True)
-        self.cache_file = self.cache_dir / f"{cache_name}.parquet"
+            self.cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
+            self.cache_dir.mkdir(exist_ok=True)
+            self.cache_file = self.cache_dir / f"{cache_name}.parquet"
 
-        # Cache metadata file to store parameters
-        self.cache_meta_file = self.cache_dir / f"{cache_name}_metadata.json"
+            # Cache metadata file to store parameters
+            self.cache_meta_file = self.cache_dir / f"{cache_name}_metadata.json"
 
-        self.cache_verified = not check_same
-        self.cache_df = None
-        self._verification_samples = 2
+            self.cache_verified = not check_same
+            self.cache_df = None
+            self._verification_samples = 2
+
+            # Load cache if exists
+            if not force_recompute:
+                self._load_cache()
+        else:
+            # Skip all cache setup
+            self.cache_dir = None
+            self.cache_file = None
+            self.cache_meta_file = None
+            self.cache_verified = True
+            self.cache_df = None
+            self._verification_samples = 0
 
         self.series_id = -1
 
-        # Load cache if exists
-        if not force_recompute:
-            self._load_cache()
-
     def _load_cache(self):
         """Load cache and metadata if they exist."""
-        if self.cache_file.exists() and self.cache_meta_file.exists():
+        if self.no_cache:
+            return
+
+        if self.cache_file.exists() and self.cache_meta_file.exists() :
             try:
                 # Load metadata
                 with open(self.cache_meta_file, 'r') as f:
                     cache_metadata = json.load(f)
 
                 # Check if parameters match
-                if self._check_params_match(cache_metadata.get('params', {})):
+                if self._check_params_match(cache_metadata.get('params', {})) or not self.check_same:
                     self.cache_df = pd.read_parquet(self.cache_file)
                     print(f"Loaded cache from {self.cache_file} with {len(self.cache_df)} entries")
                 else:
@@ -106,10 +123,13 @@ class BaseFeatureExtractor(ABC):
         """Get parameters that should be compared for cache validity."""
         # Default implementation - override in subclasses if needed
         return {k: v for k, v in self.params.items()
-                if not callable(v) and k not in ['force_recompute']}
+                if not callable(v) and k not in ['force_recompute', 'no_cache']}
 
     def _save_cache(self):
         """Save the cache dataframe and metadata to disk."""
+        if self.no_cache:
+            return
+
         if self.cache_df is not None and len(self.cache_df) > 0:
             # Save data
             self.cache_df.to_parquet(self.cache_file)
@@ -133,6 +153,9 @@ class BaseFeatureExtractor(ABC):
 
         Override this method if you want custom cache key generation.
         """
+        if self.no_cache:
+            return "no_cache"
+
         if isinstance(data, TimeSeriesData):
             # Use the ts_id if available
             if hasattr(data, 'series_id') and data.series_id is not None:
@@ -167,7 +190,7 @@ class BaseFeatureExtractor(ABC):
 
     def _verify_cache_entry(self, cache_key: str, computed_features: Dict[str, float]) -> bool:
         """Verify that cached features match computed features."""
-        if self.cache_df is None or cache_key not in self.cache_df.index:
+        if self.no_cache or self.cache_df is None or cache_key not in self.cache_df.index:
             return False
 
         cached_row = self.cache_df.loc[cache_key]
@@ -198,7 +221,7 @@ class BaseFeatureExtractor(ABC):
 
     def _verify_cache_integrity(self, sample_data: List[Union[pd.DataFrame, TimeSeriesData]]) -> bool:
         """Verify cache integrity using a sample of data."""
-        if not sample_data:
+        if self.no_cache or not sample_data:
             return True
 
         print(f"Verifying cache integrity using {len(sample_data)} samples...")
@@ -253,11 +276,15 @@ class BaseFeatureExtractor(ABC):
         Returns:
             Dictionary of features
         """
-        # Get cache key
-        cache_key = self._get_cache_key(data)
-
         if hasattr(data, 'series_id'):
             self.series_id = data.series_id
+
+        # If no_cache is True, just compute features directly
+        if self.no_cache:
+            return self._compute_features(data)
+
+        # Get cache key
+        cache_key = self._get_cache_key(data)
 
         # Check cache first
         if not self.force_recompute and self.cache_df is not None and cache_key in self.cache_df.index:
@@ -273,7 +300,7 @@ class BaseFeatureExtractor(ABC):
                 # For now, just verify this entry
                 computed_features = self._compute_features(data)
 
-                if not self._verify_cache_entry(cache_key, computed_features):
+                if self._verify_cache_entry(cache_key, computed_features):
                     self.cache_verified = True
                     return self.cache_df.loc[cache_key].to_dict()
                 else:
@@ -290,6 +317,10 @@ class BaseFeatureExtractor(ABC):
                                     cache_key: str) -> Dict[str, float]:
         """Compute features and update cache."""
         features = self._compute_features(data)
+
+        # Skip caching if no_cache is True
+        if self.no_cache:
+            return features
 
         # Update cache
         if self.cache_df is None:
@@ -310,9 +341,12 @@ class BaseFeatureExtractor(ABC):
 
     def _clear_cache(self):
         """Clear cache files and memory."""
-        if self.cache_file.exists():
+        if self.no_cache:
+            return
+
+        if self.cache_file and self.cache_file.exists():
             self.cache_file.unlink()
-        if self.cache_meta_file.exists():
+        if self.cache_meta_file and self.cache_meta_file.exists():
             self.cache_meta_file.unlink()
         self.cache_df = None
         self.cache_verified = False
@@ -342,23 +376,33 @@ class BaseFeatureExtractor(ABC):
             all_features.append(features)
             all_keys.append(cache_key)
 
-        # Save final cache
-        self._save_cache()
+        # Save final cache (only if not skipping cache)
+        if not self.no_cache:
+            self._save_cache()
 
         return pd.DataFrame(all_features, index=all_keys)
 
     def get_cached_features(self) -> Optional[pd.DataFrame]:
         """Get all cached features if available."""
+        if self.no_cache:
+            return None
         return self.cache_df.copy() if self.cache_df is not None else None
 
     def get_cache_info(self) -> Dict[str, Any]:
         """Get information about the cache."""
+        if self.no_cache:
+            return {
+                'no_cache': True,
+                'cache_disabled': True
+            }
+
         info = {
             'cache_file': str(self.cache_file),
             'cache_exists': self.cache_file.exists(),
             'cache_loaded': self.cache_df is not None,
             'cache_verified': self.cache_verified,
-            'force_recompute': self.force_recompute
+            'force_recompute': self.force_recompute,
+            'no_cache': self.no_cache
         }
 
         if self.cache_df is not None:
@@ -372,5 +416,8 @@ class BaseFeatureExtractor(ABC):
 
     def clear_cache(self):
         """Public method to clear cache."""
+        if self.no_cache:
+            print(f"Cache is disabled for {self.__class__.__name__}")
+            return
         self._clear_cache()
         print(f"Cache cleared for {self.__class__.__name__}")

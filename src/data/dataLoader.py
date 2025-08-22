@@ -288,3 +288,139 @@ class StructuralBreakDataLoader:
         self._test_data_dict = data['test_data_dict']
         self.y_train = data['y_train']
         logger.info(f"Processed data loaded from {filepath}")
+
+    def get_train_series_sample(self, n: int, random_state: Optional[int] = None) -> Dict[int, TimeSeriesData]:
+        """
+        Get a random sample of n training time series.
+
+        Args:
+            n: Number of series to sample
+            random_state: Random seed for reproducibility
+
+        Returns:
+            Dictionary of sampled training series
+        """
+        if n <= 0:
+            return {}
+
+        if random_state is not None:
+            np.random.seed(random_state)
+
+        all_ids = list(self._train_data_dict.keys())
+        n_sample = min(n, len(all_ids))
+        sampled_ids = np.random.choice(all_ids, size=n_sample, replace=False)
+
+        return {sid: self._train_data_dict[sid] for sid in sampled_ids}
+
+    def get_balanced_train_sample(self, n: int, random_state: Optional[int] = None) -> Dict[int, TimeSeriesData]:
+        """
+        Get a balanced sample of n training time series (equal positive and negative examples).
+
+        Args:
+            n: Total number of series to sample
+            random_state: Random seed for reproducibility
+
+        Returns:
+            Dictionary of sampled training series with balanced classes
+        """
+        if n <= 0:
+            return {}
+
+        if random_state is not None:
+            np.random.seed(random_state)
+
+        positive_ids = [sid for sid, ts in self._train_data_dict.items() if ts.has_break]
+        negative_ids = [sid for sid, ts in self._train_data_dict.items() if not ts.has_break]
+
+        # Calculate how many from each class
+        n_per_class = n // 2
+        n_positive = min(n_per_class, len(positive_ids))
+        n_negative = min(n_per_class, len(negative_ids))
+
+        # If we can't get equal numbers, adjust
+        if n_positive < n_per_class and len(negative_ids) > n_negative:
+            n_negative = min(n - n_positive, len(negative_ids))
+        elif n_negative < n_per_class and len(positive_ids) > n_positive:
+            n_positive = min(n - n_negative, len(positive_ids))
+
+        # Sample from each class
+        sampled_positive = np.random.choice(positive_ids, size=n_positive, replace=False) if n_positive > 0 else []
+        sampled_negative = np.random.choice(negative_ids, size=n_negative, replace=False) if n_negative > 0 else []
+
+        # Combine and return
+        all_sampled = list(sampled_positive) + list(sampled_negative)
+        return {sid: self._train_data_dict[sid] for sid in all_sampled}
+
+    def get_first_n_train_series(self, n: int) -> Dict[int, TimeSeriesData]:
+        """
+        Get the first n training time series (by series ID order).
+
+        Args:
+            n: Number of series to get
+
+        Returns:
+            Dictionary of first n training series
+        """
+        if n <= 0:
+            return {}
+
+        sorted_ids = sorted(self._train_data_dict.keys())
+        selected_ids = sorted_ids[:min(n, len(sorted_ids))]
+
+        return {sid: self._train_data_dict[sid] for sid in selected_ids}
+
+    def get_positive_examples_sample(self, n: int, random_state: Optional[int] = None) -> Dict[int, TimeSeriesData]:
+        """
+        Get a random sample of n positive examples (series with structural breaks).
+
+        Args:
+            n: Number of positive examples to sample
+            random_state: Random seed for reproducibility
+
+        Returns:
+            Dictionary of sampled positive examples
+        """
+        if n <= 0:
+            return {}
+
+        if random_state is not None:
+            np.random.seed(random_state)
+
+        positive_examples = self.get_positive_examples()
+        positive_ids = list(positive_examples.keys())
+
+        if not positive_ids:
+            return {}
+
+        n_sample = min(n, len(positive_ids))
+        sampled_ids = np.random.choice(positive_ids, size=n_sample, replace=False)
+
+        return {sid: positive_examples[sid] for sid in sampled_ids}
+
+    def get_negative_examples_sample(self, n: int, random_state: Optional[int] = None) -> Dict[int, TimeSeriesData]:
+        """
+        Get a random sample of n negative examples (series without structural breaks).
+
+        Args:
+            n: Number of negative examples to sample
+            random_state: Random seed for reproducibility
+
+        Returns:
+            Dictionary of sampled negative examples
+        """
+        if n <= 0:
+            return {}
+
+        if random_state is not None:
+            np.random.seed(random_state)
+
+        negative_examples = self.get_negative_examples()
+        negative_ids = list(negative_examples.keys())
+
+        if not negative_ids:
+            return {}
+
+        n_sample = min(n, len(negative_ids))
+        sampled_ids = np.random.choice(negative_ids, size=n_sample, replace=False)
+
+        return {sid: negative_examples[sid] for sid in sampled_ids}

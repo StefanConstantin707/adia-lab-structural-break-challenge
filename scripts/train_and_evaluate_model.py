@@ -1,5 +1,6 @@
 # scripts/optimize_xgboost.py
 """Script to evaluate model performance"""
+from lightgbm import LGBMClassifier
 from sklearn.model_selection import StratifiedKFold, cross_validate
 from tqdm import tqdm
 from xgboost import XGBClassifier
@@ -16,12 +17,14 @@ import pandas as pd
 import logging
 
 from src.data.dataLoader import StructuralBreakDataLoader
+from src.features.extract_garch_features import AdvancedVolatilityBreakFeatureExtractor
 from src.features.extract_information_features import InformationFeatureExtractor
 from src.features.extract_regression_breakpoint_features import RegressionBreakpointFeatureExtractor
 from src.features.extract_rolling_features import RollingFeatureExtractor
 from src.features.extract_spectral_features import SpectralFeatureExtractor
 from src.features.extract_volatility_features import VolatilityFeatureExtractor
 from src.features.extract_distribution_features import DistributionCombinedFeatureExtractor
+from src.features.nonlinear_model_chow import StatisticalMLTestFeatureExtractor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,7 +38,8 @@ def load_and_extract_features():
     data_handler = StructuralBreakDataLoader()
     data_handler.load_data(use_crunch=False)
 
-    train_data_dict = data_handler.get_all_train_series()
+    # train_data_dict = data_handler.get_all_train_series()
+    train_data_dict = data_handler.get_first_n_train_series(n=1000)
     feature_list = []
     labels = []
     series_ids = []
@@ -48,12 +52,26 @@ def load_and_extract_features():
     regressionBreakpointExtractor = RegressionBreakpointFeatureExtractor()
     informationExtractor = InformationFeatureExtractor()
     factorBreakExtractor = FactorBreakFeatureExtractor()
-    cusumBreakpointExtractor = CusumBreakpointFeatureExtractor()
+    cusumBreakpointExtractor = CusumBreakpointFeatureExtractor(
+    adaptive_lags=True,
+    max_lags=30,
+    pacf_alpha=0.05,
+    test_assumptions=True,
+    )
     changepointExtractor = ChangepointFeatureExtractor()
     autocorrelationExtractor = AutocorrelationFeatureExtractor()
-    distributionCombinedExtractor = DistributionCombinedFeatureExtractor()
+    distributionCombinedExtractor = DistributionCombinedFeatureExtractor(lags=5)
 
     # cnnBreakDetectionExtractor = CNNBreakDetectionExtractor(check_same=False)
+
+    nonlinearModelExtractor = StatisticalMLTestFeatureExtractor(
+        min_samples_per_period=30,  # Ensure enough data for ML models
+        lags=5,  # Autoregressive lags
+        # no_cache=False,  # Cache for faster reruns
+        # check_same=False
+    )
+
+    advancedVolatilityBreakFeatureExtractor = AdvancedVolatilityBreakFeatureExtractor(check_same=False)
 
     for series_id, ts_obj in tqdm(train_data_dict.items()):
         try:
@@ -62,36 +80,49 @@ def load_and_extract_features():
 
             # 0.582
             spectral_features = spectralExtractor.extract_features(ts_obj)
-
-            # 0.6
+            #
+            # # 0.6
             rolling_features = rollingExtractor.extract_features(ts_obj)
-
-            # 0.618
+            #
+            # # 0.618
             regression_breakpoint_features = regressionBreakpointExtractor.extract_features(ts_obj)
+            #
+            # # 0.544
+            # information_features = informationExtractor.extract_features(ts_obj)
+            #
+            # # 0.522
+            # factor_break_features = factorBreakExtractor.extract_features(ts_obj)
 
-            # 0.544
-            information_features = informationExtractor.extract_features(ts_obj)
-
-            # 0.522
-            factor_break_features = factorBreakExtractor.extract_features(ts_obj)
-
-            # 0.64
+            # 0.654
             cusum_breakpoint_features = cusumBreakpointExtractor.extract_features(ts_obj)
 
-            # 0.573
+            # # 0.573
             changepoint_features = changepointExtractor.extract_features(ts_obj)
-
-            # 0.517
-            autocorrelation_features = autocorrelationExtractor.extract_features(ts_obj)
-
-            # 0.69
+            #
+            # # 0.517
+            # autocorrelation_features = autocorrelationExtractor.extract_features(ts_obj)
+            #
+            # # 0.69
             distribution_combined_features = distributionCombinedExtractor.extract_features(ts_obj)
 
             # cnn_break_detection_features = cnnBreakDetectionExtractor.extract_features(ts_obj)
 
-            total_feats = (volatility_features | spectral_features | rolling_features | regression_breakpoint_features |
-                           information_features | factor_break_features | cusum_breakpoint_features |
-                           changepoint_features | autocorrelation_features | distribution_combined_features)
+            # # 0.66
+            # advancedVolatilityBreak_features = advancedVolatilityBreakFeatureExtractor.extract_features(ts_obj)
+
+            # Extract features
+            # nonlinear_features = nonlinearModelExtractor.extract_features(ts_obj)
+
+            # Combine with existing
+            total_feats = distribution_combined_features
+
+            #
+            # total_feats = (volatility_features | spectral_features | rolling_features | regression_breakpoint_features |
+            #                information_features | factor_break_features | cusum_breakpoint_features |
+            #                changepoint_features | autocorrelation_features | distribution_combined_features)
+
+            # total_feats = (advancedVolatilityBreak_features | cusum_breakpoint_features | distribution_combined_features | spectral_features | rolling_features | regression_breakpoint_features | changepoint_features | nonlinear_features)
+            # total_feats = (advancedVolatilityBreak_features)
 
         except Exception as e:
             logger.warning(f"Failed feature extraction for series {series_id}: {e}")
@@ -121,10 +152,12 @@ def train_test(X_train: pd.DataFrame, y_train: pd.Series):
     model = XGBClassifier(
         n_estimators=100,
         max_depth=5,
-        learning_rate=0.1,
+        learning_rate=0.05,
         random_state=42,
-        eval_metric='roc_auc',
+        eval_metric='logloss',
     )
+
+    # model = LGBMClassifier(learning_rate=0.01)
 
     cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
 

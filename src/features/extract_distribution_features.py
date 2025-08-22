@@ -22,7 +22,7 @@ class DistributionCombinedFeatureExtractor(BaseFeatureExtractor):
             min_length: Optional[int] = None,
             cache_name: str = 'distribution_combined_features',
             force_recompute: bool = False,
-            min_sample_size: int = 8  # Minimum sample size for advanced statistical tests
+            min_sample_size: int = 8
     ):
         """
         Args:
