@@ -8,6 +8,7 @@ import pandas as pd
 from typing import Dict, List, Tuple, Optional, Union
 from dataclasses import dataclass
 import torch
+from statsmodels.sandbox.distributions.genpareto import shape
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler
 import logging
@@ -276,6 +277,49 @@ def create_simple_testing_dataset(
 
     return all_samples, stats
 
+def create_simple_testing_dataset2(
+        test_data_dict: Dict,
+        window_size: int = 100,
+) -> torch.Tensor:
+    """
+    Create sliding window dataset from time series data
+
+    Args:
+        train_data_dict: Dictionary of {series_id: TimeSeriesData}
+        window_size: Size of each sliding window
+        stride: Step size for sliding window
+        min_break_distance: Minimum distance from window edge to consider break "in window"
+        balance_classes: Whether to balance break vs no-break windows
+        max_windows_per_series: Maximum windows to extract per series (for efficiency)
+
+    Returns:
+        List of WindowSample objects and statistics dict
+    """
+
+    all_samples = []
+    stats = {
+        'total_windows': 0,
+        'break_windows': 0,
+        'no_break_windows': 0,
+        'series_processed': 0,
+        'series_skipped': 0
+    }
+
+    len_data = len(test_data_dict)
+    data = torch.empty(size=(len_data, window_size))
+
+    i = 0
+    for series_id, ts_obj in test_data_dict.items():
+
+        len_pre_post = window_size // 2
+
+        data[i, :len_pre_post] = ts_obj.period_0_values[-len_pre_post:]
+        data[i, len_pre_post:] = ts_obj.period_1_values[:len_pre_post]
+
+        i += 1
+
+    return data
+
 
 def create_test_windows(
         ts_obj: TimeSeriesData,
@@ -457,3 +501,4 @@ def create_dataset_for_testing(data_dict: Dict = None, data_handler: StructuralB
     print(f"Created dataset with {len(dataset)} samples")
 
     return dataset, analysis
+

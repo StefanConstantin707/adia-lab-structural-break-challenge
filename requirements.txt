@@ -18,7 +18,7 @@ statsmodels>=0.12.0
 ruptures>=1.1.5
 
 
-torch~=2.7.1+cu126
+torch
 pytest~=8.4.0
 joblib~=1.5.1
 optuna~=4.3.0
